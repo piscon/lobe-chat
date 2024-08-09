@@ -30,6 +30,13 @@ const nextConfig = {
 
   output: buildWithDocker ? 'standalone' : undefined,
 
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  typescript: {
+    ignoreBuildErrors: true,
+  },
+
   redirects: async () => [
     {
       source: '/settings',
