@@ -2,36 +2,46 @@ import { isDesktop } from '@lobechat/const';
 import { HotkeyEnum, KeyEnum } from '@lobechat/types';
 import { isCommandPressed } from '@lobechat/utils';
 import {
+  INSERT_MENTION_COMMAND,
   INSERT_TABLE_COMMAND,
   ReactCodePlugin,
   ReactCodeblockPlugin,
   ReactHRPlugin,
-  ReactLinkPlugin,
+  ReactLinkHighlightPlugin,
   ReactListPlugin,
   ReactMathPlugin,
   ReactTablePlugin,
 } from '@lobehub/editor';
 import { Editor, FloatMenu, SlashMenu, useEditorState } from '@lobehub/editor/react';
-import { Hotkey, combineKeys } from '@lobehub/ui';
+import { combineKeys } from '@lobehub/ui';
+import { css, cx } from 'antd-style';
 import { Table2Icon } from 'lucide-react';
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import { useHotkeysContext } from 'react-hotkeys-hook';
-import { Trans, useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
+import { useTranslation } from 'react-i18next';
 
 import { useUserStore } from '@/store/user';
 import { preferenceSelectors, settingsSelectors } from '@/store/user/selectors';
 
 import { useChatInputStore, useStoreApi } from '../store';
+import Placeholder from './Placeholder';
 
-const InputEditor = memo<{ defaultRows?: number }>(() => {
-  const [editor, slashMenuRef, send, updateMarkdownContent, expand] = useChatInputStore((s) => [
-    s.editor,
-    s.slashMenuRef,
-    s.handleSendButton,
-    s.updateMarkdownContent,
-    s.expand,
-  ]);
+const className = cx(css`
+  p {
+    margin-block-end: 0;
+  }
+`);
+
+const InputEditor = memo<{ defaultRows?: number }>(({ defaultRows = 2 }) => {
+  const [editor, slashMenuRef, send, updateMarkdownContent, expand, mentionItems] =
+    useChatInputStore((s) => [
+      s.editor,
+      s.slashMenuRef,
+      s.handleSendButton,
+      s.updateMarkdownContent,
+      s.expand,
+      s.mentionItems,
+    ]);
 
   const storeApi = useStoreApi();
   const state = useEditorState(editor);
@@ -42,9 +52,8 @@ const InputEditor = memo<{ defaultRows?: number }>(() => {
   const isChineseInput = useRef(false);
 
   const useCmdEnterToSend = useUserStore(preferenceSelectors.useCmdEnterToSend);
-  const wrapperShortcut = useCmdEnterToSend
-    ? KeyEnum.Enter
-    : combineKeys([KeyEnum.Mod, KeyEnum.Enter]);
+
+  const enableMention = !!mentionItems && mentionItems.length > 0;
 
   useEffect(() => {
     const fn = (e: BeforeUnloadEvent) => {
@@ -60,11 +69,80 @@ const InputEditor = memo<{ defaultRows?: number }>(() => {
     };
   }, [state.isEmpty]);
 
+  const enableRichRender = useUserStore(preferenceSelectors.inputMarkdownRender);
+
+  const richRenderProps = useMemo(
+    () =>
+      !enableRichRender
+        ? {
+            enablePasteMarkdown: false,
+            markdownOption: {
+              bold: false,
+              code: false,
+              header: false,
+              italic: false,
+              quote: false,
+              strikethrough: false,
+              underline: false,
+              underlineStrikethrough: false,
+            },
+          }
+        : {
+            plugins: [
+              ReactListPlugin,
+              ReactCodePlugin,
+              ReactCodeblockPlugin,
+              ReactHRPlugin,
+              ReactLinkHighlightPlugin,
+              ReactTablePlugin,
+              Editor.withProps(ReactMathPlugin, {
+                renderComp: expand
+                  ? undefined
+                  : (props) => (
+                      <FloatMenu
+                        {...props}
+                        getPopupContainer={() => (slashMenuRef as any)?.current}
+                      />
+                    ),
+              }),
+            ],
+          },
+    [enableRichRender],
+  );
+
   return (
     <Editor
       autoFocus
+      className={className}
       content={''}
       editor={editor}
+      {...richRenderProps}
+      mentionOption={
+        enableMention
+          ? {
+              items: mentionItems,
+              markdownWriter: (mention) => {
+                return `<mention name="${mention.label}" id="${mention.metadata.id}" />`;
+              },
+              onSelect: (editor, option) => {
+                editor.dispatchCommand(INSERT_MENTION_COMMAND, {
+                  label: String(option.label),
+                  metadata: option.metadata,
+                });
+              },
+              renderComp: expand
+                ? undefined
+                : (props) => {
+                    return (
+                      <SlashMenu
+                        {...props}
+                        getPopupContainer={() => (slashMenuRef as any)?.current}
+                      />
+                    );
+                  },
+            }
+          : undefined
+      }
       onBlur={() => {
         disableScope(HotkeyEnum.AddUserMessage);
       }}
@@ -113,43 +191,7 @@ const InputEditor = memo<{ defaultRows?: number }>(() => {
           }
         }
       }}
-      placeholder={
-        <Flexbox align={'center'} as={'span'} gap={4} horizontal>
-          {t('sendPlaceholder', { ns: 'chat' }).replace('...', ', ')}
-          <Trans
-            as={'span'}
-            components={{
-              key: (
-                <Hotkey
-                  as={'span'}
-                  keys={wrapperShortcut}
-                  style={{ color: 'inherit' }}
-                  styles={{ kbdStyle: { color: 'inhert' } }}
-                  variant={'borderless'}
-                />
-              ),
-            }}
-            i18nKey={'input.warpWithKey'}
-            ns={'chat'}
-          />
-          {'...'}
-        </Flexbox>
-      }
-      plugins={[
-        ReactListPlugin,
-        ReactLinkPlugin,
-        ReactCodePlugin,
-        ReactCodeblockPlugin,
-        ReactHRPlugin,
-        ReactTablePlugin,
-        Editor.withProps(ReactMathPlugin, {
-          renderComp: expand
-            ? undefined
-            : (props) => (
-                <FloatMenu {...props} getPopupContainer={() => (slashMenuRef as any)?.current} />
-              ),
-        }),
-      ]}
+      placeholder={<Placeholder />}
       slashOption={{
         items: [
           {
@@ -168,6 +210,9 @@ const InputEditor = memo<{ defaultRows?: number }>(() => {
                 <SlashMenu {...props} getPopupContainer={() => (slashMenuRef as any)?.current} />
               );
             },
+      }}
+      style={{
+        minHeight: defaultRows > 1 ? defaultRows * 23 : undefined,
       }}
       type={'text'}
       variant={'chat'}
